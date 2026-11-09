@@ -1,0 +1,436 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "name": "Demo: Glycolysis Segment",
+    "description": "Educational ODE model of a shortened glycolytic chain (Glucose → G6P → FBP → GAP → Pyruvate) with ATP/ADP cofactors, citrate inhibition of PFK, and baseline / mutant / inhibited scenarios.",
+    "author": "PathwayFlux Forge",
+    "created_at": "2026-07-10T05:04:28.722589+00:00",
+    "modified_at": "2026-07-10T05:04:28.722710+00:00",
+    "units_time": "s",
+    "units_concentration": "mM",
+    "version": "1.0.0",
+    "tags": [
+      "demo",
+      "glycolysis",
+      "education"
+    ]
+  },
+  "compartments": [
+    {
+      "id": "cyto",
+      "name": "Cytosol",
+      "volume": 1.0,
+      "color": "#0f172a",
+      "x": 40.0,
+      "y": 40.0,
+      "width": 900.0,
+      "height": 520.0
+    }
+  ],
+  "metabolites": [
+    {
+      "id": "glc",
+      "name": "Glucose",
+      "compartment_id": "cyto",
+      "initial_concentration": 5.0,
+      "is_boundary": false,
+      "charge": 0,
+      "formula": "C6H12O6",
+      "x": 120.0,
+      "y": 180.0,
+      "notes": ""
+    },
+    {
+      "id": "g6p",
+      "name": "G6P",
+      "compartment_id": "cyto",
+      "initial_concentration": 0.2,
+      "is_boundary": false,
+      "charge": 0,
+      "formula": "C6H13O9P",
+      "x": 300.0,
+      "y": 180.0,
+      "notes": ""
+    },
+    {
+      "id": "fbp",
+      "name": "FBP",
+      "compartment_id": "cyto",
+      "initial_concentration": 0.05,
+      "is_boundary": false,
+      "charge": 0,
+      "formula": "C6H14O12P2",
+      "x": 480.0,
+      "y": 180.0,
+      "notes": ""
+    },
+    {
+      "id": "gap",
+      "name": "GAP",
+      "compartment_id": "cyto",
+      "initial_concentration": 0.02,
+      "is_boundary": false,
+      "charge": 0,
+      "formula": "C3H7O6P",
+      "x": 660.0,
+      "y": 180.0,
+      "notes": ""
+    },
+    {
+      "id": "pyr",
+      "name": "Pyruvate",
+      "compartment_id": "cyto",
+      "initial_concentration": 0.1,
+      "is_boundary": false,
+      "charge": 0,
+      "formula": "C3H4O3",
+      "x": 840.0,
+      "y": 180.0,
+      "notes": ""
+    },
+    {
+      "id": "atp",
+      "name": "ATP",
+      "compartment_id": "cyto",
+      "initial_concentration": 2.5,
+      "is_boundary": true,
+      "charge": 0,
+      "formula": "C10H16N5O13P3",
+      "x": 300.0,
+      "y": 360.0,
+      "notes": ""
+    },
+    {
+      "id": "adp",
+      "name": "ADP",
+      "compartment_id": "cyto",
+      "initial_concentration": 0.5,
+      "is_boundary": true,
+      "charge": 0,
+      "formula": "C10H15N5O10P2",
+      "x": 480.0,
+      "y": 360.0,
+      "notes": ""
+    },
+    {
+      "id": "cit",
+      "name": "Citrate",
+      "compartment_id": "cyto",
+      "initial_concentration": 0.0,
+      "is_boundary": true,
+      "charge": 0,
+      "formula": "C6H8O7",
+      "x": 480.0,
+      "y": 460.0,
+      "notes": "Allosteric / competitive inhibitor signal for PFK"
+    }
+  ],
+  "enzymes": [
+    {
+      "id": "enz_hk",
+      "name": "Hexokinase",
+      "concentration": 1.0,
+      "kcat": 1.0,
+      "notes": ""
+    },
+    {
+      "id": "enz_pfk",
+      "name": "PFK-1",
+      "concentration": 1.0,
+      "kcat": 1.0,
+      "notes": ""
+    },
+    {
+      "id": "enz_ald",
+      "name": "Aldolase",
+      "concentration": 1.0,
+      "kcat": 1.0,
+      "notes": ""
+    },
+    {
+      "id": "enz_pk",
+      "name": "Pyruvate kinase",
+      "concentration": 1.0,
+      "kcat": 1.0,
+      "notes": ""
+    }
+  ],
+  "cofactors": [
+    {
+      "id": "cof_atp_hk",
+      "name": "ATP (HK cosubstrate)",
+      "metabolite_id": "atp",
+      "role": "cosubstrate",
+      "notes": ""
+    },
+    {
+      "id": "cof_adp_pk",
+      "name": "ADP (PK cosubstrate)",
+      "metabolite_id": "adp",
+      "role": "cosubstrate",
+      "notes": ""
+    }
+  ],
+  "inhibitors": [
+    {
+      "id": "inh_cit",
+      "name": "Citrate (PFK inhibitor)",
+      "metabolite_id": "cit",
+      "concentration": 0.0,
+      "ki": 0.5,
+      "inhibition_type": "competitive",
+      "target_reaction_ids": [
+        "rxn_pfk"
+      ],
+      "notes": "Elevated citrate models feedback inhibition of PFK."
+    }
+  ],
+  "reactions": [
+    {
+      "id": "rxn_hk",
+      "name": "Hexokinase",
+      "substrates": [
+        {
+          "metabolite_id": "glc",
+          "stoichiometry": 1.0
+        },
+        {
+          "metabolite_id": "atp",
+          "stoichiometry": 1.0
+        }
+      ],
+      "products": [
+        {
+          "metabolite_id": "g6p",
+          "stoichiometry": 1.0
+        },
+        {
+          "metabolite_id": "adp",
+          "stoichiometry": 1.0
+        }
+      ],
+      "modifiers": [],
+      "rate_law": "michaelis_menten",
+      "parameters": {
+        "kf": 1.0,
+        "kr": 0.0,
+        "Vmax": 2.0,
+        "Km": 0.5,
+        "Km_product": 1.0,
+        "Ki": 1.0,
+        "n_hill": 1.0,
+        "K_half": 1.0,
+        "enzyme_id": "enz_hk",
+        "inhibitor_id": null,
+        "custom_expression": ""
+      },
+      "reversible": false,
+      "enzyme_id": "enz_hk",
+      "compartment_id": null,
+      "notes": "Glucose + ATP → G6P + ADP (ATP is boundary)."
+    },
+    {
+      "id": "rxn_pfk",
+      "name": "PFK",
+      "substrates": [
+        {
+          "metabolite_id": "g6p",
+          "stoichiometry": 1.0
+        },
+        {
+          "metabolite_id": "atp",
+          "stoichiometry": 1.0
+        }
+      ],
+      "products": [
+        {
+          "metabolite_id": "fbp",
+          "stoichiometry": 1.0
+        },
+        {
+          "metabolite_id": "adp",
+          "stoichiometry": 1.0
+        }
+      ],
+      "modifiers": [],
+      "rate_law": "competitive_inhibition",
+      "parameters": {
+        "kf": 1.0,
+        "kr": 0.0,
+        "Vmax": 1.5,
+        "Km": 0.3,
+        "Km_product": 1.0,
+        "Ki": 0.5,
+        "n_hill": 1.0,
+        "K_half": 1.0,
+        "enzyme_id": "enz_pfk",
+        "inhibitor_id": "inh_cit",
+        "custom_expression": ""
+      },
+      "reversible": false,
+      "enzyme_id": "enz_pfk",
+      "compartment_id": null,
+      "notes": "Committed step; competitively inhibited by citrate."
+    },
+    {
+      "id": "rxn_ald",
+      "name": "Aldolase",
+      "substrates": [
+        {
+          "metabolite_id": "fbp",
+          "stoichiometry": 1.0
+        }
+      ],
+      "products": [
+        {
+          "metabolite_id": "gap",
+          "stoichiometry": 2.0
+        }
+      ],
+      "modifiers": [],
+      "rate_law": "michaelis_menten",
+      "parameters": {
+        "kf": 1.0,
+        "kr": 0.0,
+        "Vmax": 1.2,
+        "Km": 0.2,
+        "Km_product": 1.0,
+        "Ki": 1.0,
+        "n_hill": 1.0,
+        "K_half": 1.0,
+        "enzyme_id": "enz_ald",
+        "inhibitor_id": null,
+        "custom_expression": ""
+      },
+      "reversible": false,
+      "enzyme_id": "enz_ald",
+      "compartment_id": null,
+      "notes": ""
+    },
+    {
+      "id": "rxn_pk",
+      "name": "Pyruvate kinase",
+      "substrates": [
+        {
+          "metabolite_id": "gap",
+          "stoichiometry": 1.0
+        },
+        {
+          "metabolite_id": "adp",
+          "stoichiometry": 1.0
+        }
+      ],
+      "products": [
+        {
+          "metabolite_id": "pyr",
+          "stoichiometry": 1.0
+        },
+        {
+          "metabolite_id": "atp",
+          "stoichiometry": 1.0
+        }
+      ],
+      "modifiers": [],
+      "rate_law": "hill",
+      "parameters": {
+        "kf": 1.0,
+        "kr": 0.0,
+        "Vmax": 2.5,
+        "Km": 1.0,
+        "Km_product": 1.0,
+        "Ki": 1.0,
+        "n_hill": 2.5,
+        "K_half": 0.15,
+        "enzyme_id": "enz_pk",
+        "inhibitor_id": null,
+        "custom_expression": ""
+      },
+      "reversible": false,
+      "enzyme_id": "enz_pk",
+      "compartment_id": null,
+      "notes": "Cooperative (Hill) sink toward pyruvate."
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "sc_baseline",
+      "name": "Baseline",
+      "kind": "baseline",
+      "description": "Wild-type enzyme levels, no citrate inhibition.",
+      "overrides": [],
+      "color": "#38bdf8"
+    },
+    {
+      "id": "sc_mutant",
+      "name": "HK mutant (↓kcat)",
+      "kind": "mutant",
+      "description": "Hexokinase catalytic efficiency reduced 5×.",
+      "overrides": [
+        {
+          "target_type": "enzyme_kcat",
+          "target_id": "enz_hk",
+          "param_name": null,
+          "value": 0.2
+        }
+      ],
+      "color": "#f472b6"
+    },
+    {
+      "id": "sc_inhibited",
+      "name": "PFK inhibited",
+      "kind": "inhibited",
+      "description": "Citrate raised to 2 mM to inhibit PFK.",
+      "overrides": [
+        {
+          "target_type": "metabolite_initial",
+          "target_id": "cit",
+          "param_name": null,
+          "value": 2.0
+        },
+        {
+          "target_type": "inhibitor_concentration",
+          "target_id": "inh_cit",
+          "param_name": null,
+          "value": 2.0
+        }
+      ],
+      "color": "#fbbf24"
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "a1",
+      "text": "ATP and ADP are treated as buffered boundary metabolites (fixed pools).",
+      "category": "boundary"
+    },
+    {
+      "id": "a2",
+      "text": "This is a didactic reduced chain, not a genome-scale or full EMP pathway.",
+      "category": "approximation"
+    },
+    {
+      "id": "a3",
+      "text": "Concentrations in mM; time in arbitrary seconds suitable for classroom demos.",
+      "category": "units"
+    },
+    {
+      "id": "a4",
+      "text": "PFK inhibition modeled as competitive Michaelis–Menten vs citrate.",
+      "category": "kinetics"
+    },
+    {
+      "id": "a5",
+      "text": "Well-mixed single cytosolic compartment; no transport delays.",
+      "category": "compartment"
+    }
+  ],
+  "simulation": {
+    "t_start": 0.0,
+    "t_end": 50.0,
+    "n_points": 250,
+    "method": "LSODA",
+    "rtol": 1e-6,
+    "atol": 1e-9
+  },
+  "layout_version": 1
+}

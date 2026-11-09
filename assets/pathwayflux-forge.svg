@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="PathwayFlux Forge icon">
+  <defs>
+    <radialGradient id="bg" cx="48%" cy="38%" r="72%">
+      <stop offset="0" stop-color="#1de7c4"/>
+      <stop offset="0.36" stop-color="#11405a"/>
+      <stop offset="1" stop-color="#071018"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="28" x2="222" y1="192" y2="58">
+      <stop offset="0" stop-color="#30f4b5"/>
+      <stop offset="0.52" stop-color="#46b7ff"/>
+      <stop offset="1" stop-color="#ffcf5a"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="256" height="256" rx="44" fill="#05090d"/>
+  <rect x="10" y="10" width="236" height="236" rx="38" fill="url(#bg)" stroke="#62ffe1" stroke-opacity=".28" stroke-width="2"/>
+  <path d="M58 178 C82 128 101 121 126 128 C154 136 163 90 197 72" fill="none" stroke="#061118" stroke-opacity=".8" stroke-width="26" stroke-linecap="round"/>
+  <path d="M58 178 C82 128 101 121 126 128 C154 136 163 90 197 72" fill="none" stroke="url(#edge)" stroke-width="14" stroke-linecap="round" filter="url(#glow)"/>
+  <path d="M63 76 h42 M84 55 v42 M151 190 h42 M172 169 v42" stroke="#d9fff7" stroke-width="10" stroke-linecap="round" opacity=".92"/>
+  <g filter="url(#glow)">
+    <circle cx="56" cy="178" r="23" fill="#2dffc0"/>
+    <circle cx="127" cy="128" r="18" fill="#47b8ff"/>
+    <circle cx="199" cy="72" r="25" fill="#ffd15b"/>
+  </g>
+  <circle cx="56" cy="178" r="10" fill="#06382e"/>
+  <circle cx="127" cy="128" r="7" fill="#09243b"/>
+  <circle cx="199" cy="72" r="10" fill="#3f2803"/>
+  <path d="M60 218 C95 228 151 230 197 210" fill="none" stroke="#eafffb" stroke-opacity=".22" stroke-width="3" stroke-linecap="round"/>
+</svg>
