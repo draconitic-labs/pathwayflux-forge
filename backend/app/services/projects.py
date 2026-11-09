@@ -18,7 +18,8 @@ def _now() -> str:
 
 
 def _slug(name: str) -> str:
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip().lower()).strip("-")
+    # Leave room under the 128-character id limit for a "-N" suffix added on name clashes.
+    s = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip().lower())[:100].strip("-")
     return s or "pathway"
 
 

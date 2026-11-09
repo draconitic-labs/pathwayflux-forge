@@ -180,14 +180,19 @@ def custom_rate(
         ns[safe_name] = _safe(c)
         ns[mid] = _safe(c)
 
+    if len(expr) > MAX_EXPRESSION_LENGTH:
+        raise ValueError(f"Custom rate expression is longer than {MAX_EXPRESSION_LENGTH} characters")
     try:
         tree = ast.parse(expr, mode="eval")
-    except SyntaxError as exc:
-        raise ValueError(f"Custom rate evaluation failed: {exc}") from exc
+    except (SyntaxError, RecursionError, MemoryError) as exc:
+        raise ValueError(f"Custom rate expression is not valid: {exc}") from exc
     try:
         return float(_eval_node(tree.body, ns))
-    except (ArithmeticError, TypeError) as exc:
+    except (ArithmeticError, TypeError, RecursionError) as exc:
         raise ValueError(f"Custom rate evaluation failed: {exc}") from exc
+
+
+MAX_EXPRESSION_LENGTH = 500
 
 
 _BIN_OPS: dict[type, Callable[[float, float], float]] = {

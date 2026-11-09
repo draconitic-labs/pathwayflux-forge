@@ -98,3 +98,54 @@ def test_custom_rate_metabolite_named_like_dunder_cannot_reach_attributes():
     rxn, params = _reaction("kf.__class__.__name__.__len__()")
     with pytest.raises(ValueError):
         custom_rate(rxn, conc, params, {v: k for k, v in id_to_name.items()}, id_to_name)
+
+
+def _demo_with_custom(expr: str):
+    from app.services.demo import build_glycolysis_demo
+
+    project = build_glycolysis_demo()
+    rxn = project.reactions[0]
+    rxn.rate_law = RateLawType.CUSTOM
+    rxn.parameters.custom_expression = expr
+    return project, rxn.name
+
+
+def test_simulation_reports_a_bad_custom_expression():
+    from app.engine.ode import simulate
+
+    project, name = _demo_with_custom("kf * no_such_metabolite")
+    result = simulate(project)
+    assert result.success is False
+    assert name in result.message and "Unknown symbol" in result.message
+    assert result.time == []
+
+
+def test_simulate_endpoint_returns_the_expression_error(client):
+    project, name = _demo_with_custom("kf *")
+    r = client.post("/api/simulate", json={"project": project.model_dump()})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is False and name in body["message"]
+
+
+@pytest.mark.parametrize(
+    "expr",
+    ["-" * 5000 + "1", "(" * 3000 + "1" + ")" * 3000, "(" * 240 + "1" + ")" * 240, "1" + "+1" * 2000],
+)
+def test_oversized_or_deeply_nested_expressions_fail_cleanly(expr):
+    rxn, params = _reaction(expr)
+    with pytest.raises(ValueError):
+        custom_rate(rxn, {"m1": 1.0}, params, {"A": "m1"}, {"m1": "A"})
+
+
+def test_long_unary_chain_within_the_limit_evaluates():
+    rxn, params = _reaction("-" * 498 + "kf")
+    assert custom_rate(rxn, {"m1": 1.0}, params, {"A": "m1"}, {"m1": "A"}) == 2.0
+
+
+def test_long_project_name_gets_a_valid_id(client):
+    demo = client.get("/api/projects/demo").json()
+    demo["meta"]["name"] = "Glycolysis " * 30
+    r = client.post("/api/projects", json={"project": demo})
+    assert r.status_code == 200, r.text
+    assert len(r.json()["id"]) <= 128

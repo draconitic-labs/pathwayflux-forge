@@ -185,9 +185,24 @@ def simulate(
         for j, fn in enumerate(rate_fns):
             try:
                 v[j] = float(fn(conc))
-            except Exception:
-                v[j] = 0.0
+            except Exception as exc:
+                raise ValueError(f"Reaction {proj.reactions[j].name}: {exc}") from exc
         return v
+
+    # Evaluate every rate law once at the initial state, so a bad custom expression is
+    # reported before integration instead of failing partway through.
+    try:
+        fluxes_at(y0)
+    except ValueError as exc:
+        return SimulationResult(
+            time=[],
+            concentrations={},
+            fluxes={},
+            metabolite_names=id_to_name,
+            reaction_names={r.id: r.name for r in proj.reactions},
+            success=False,
+            message=str(exc),
+        )
 
     def rhs(_t: float, y: np.ndarray) -> np.ndarray:
         v = fluxes_at(y)
