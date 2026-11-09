@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 import math
-from typing import Callable
+from typing import Callable, Iterable
 
 from app.models.schema import (
     Inhibitor,
@@ -150,19 +150,15 @@ def hill_rate(
     return Vmax * Sn / (Kn + Sn)
 
 
-def custom_rate(
-    reaction: Reaction,
-    conc: dict[str, float],
-    params: RateParameters,
-    name_to_id: dict[str, str],
-    id_to_name: dict[str, str],
-) -> float:
-    """Evaluate a restricted arithmetic expression with metabolite names and params."""
-    expr = (params.custom_expression or "").strip()
-    if not expr:
-        return mass_action_rate(reaction, conc, params)
+class RateExpressionError(ValueError):
+    """A custom rate expression is malformed: syntax, construct, unknown name or length."""
 
-    # Build safe namespace: param symbols + metabolite symbols by name
+
+MAX_EXPRESSION_LENGTH = 500
+
+
+def _custom_namespace(params: RateParameters, conc: dict[str, float], id_to_name: dict[str, str]) -> dict[str, float]:
+    """Parameter symbols plus every metabolite, by id and by its name with non-word characters as _."""
     ns: dict[str, float] = {
         "kf": params.kf,
         "kr": params.kr,
@@ -175,24 +171,62 @@ def custom_rate(
     }
     for mid, c in conc.items():
         name = id_to_name.get(mid, mid)
-        # Allow alphanumeric names only
         safe_name = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in name)
         ns[safe_name] = _safe(c)
         ns[mid] = _safe(c)
+    return ns
 
+
+def _parse_checked(expr: str, names: Iterable[str]) -> ast.Expression:
+    """Parse ``expr`` and check its structure against ``names`` without evaluating it."""
     if len(expr) > MAX_EXPRESSION_LENGTH:
-        raise ValueError(f"Custom rate expression is longer than {MAX_EXPRESSION_LENGTH} characters")
+        raise RateExpressionError(f"Custom rate expression is longer than {MAX_EXPRESSION_LENGTH} characters")
     try:
         tree = ast.parse(expr, mode="eval")
     except (SyntaxError, RecursionError, MemoryError) as exc:
-        raise ValueError(f"Custom rate expression is not valid: {exc}") from exc
+        raise RateExpressionError(f"Custom rate expression is not valid: {exc}") from exc
+    known = set(names)
     try:
-        return float(_eval_node(tree.body, ns))
-    except (ArithmeticError, TypeError, RecursionError) as exc:
-        raise ValueError(f"Custom rate evaluation failed: {exc}") from exc
+        _check_node(tree.body, known)
+    except RecursionError as exc:
+        raise RateExpressionError("Custom rate expression is nested too deeply") from exc
+    return tree
 
 
-MAX_EXPRESSION_LENGTH = 500
+def check_custom_expression(
+    reaction: Reaction, conc: dict[str, float], id_to_name: dict[str, str]
+) -> None:
+    """Raise RateExpressionError when the reaction's custom expression is malformed."""
+    params = reaction.parameters
+    expr = (params.custom_expression or "").strip()
+    if expr:
+        _parse_checked(expr, _custom_namespace(params, conc, id_to_name))
+
+
+def custom_rate(
+    reaction: Reaction,
+    conc: dict[str, float],
+    params: RateParameters,
+    name_to_id: dict[str, str],
+    id_to_name: dict[str, str],
+) -> float:
+    """Evaluate a restricted arithmetic expression with metabolite names and params.
+
+    Malformed expressions raise RateExpressionError. Arithmetic failures such as division by
+    zero or overflow raise ArithmeticError, which the integrator treats as zero flux.
+    """
+    expr = (params.custom_expression or "").strip()
+    if not expr:
+        return mass_action_rate(reaction, conc, params)
+    ns = _custom_namespace(params, conc, id_to_name)
+    tree = _parse_checked(expr, ns)
+    try:
+        value = _eval_node(tree.body, ns)
+    except RecursionError as exc:
+        raise RateExpressionError("Custom rate expression is nested too deeply") from exc
+    if isinstance(value, complex):
+        raise ArithmeticError("Custom rate has no real value here")
+    return float(value)
 
 
 _BIN_OPS: dict[type, Callable[[float, float], float]] = {
@@ -204,20 +238,34 @@ _BIN_OPS: dict[type, Callable[[float, float], float]] = {
 }
 
 
-def _eval_node(node: ast.AST, ns: dict[str, float]) -> float:
-    """Evaluate numbers, known names, + - * / ** and unary signs; reject everything else."""
+def _check_node(node: ast.AST, names: set[str]) -> None:
+    """Accept numbers, known names, + - * / ** and unary signs; reject everything else."""
     if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+        return
+    if isinstance(node, ast.Name):
+        if node.id not in names:
+            raise RateExpressionError(f"Unknown symbol in custom rate: {node.id}")
+        return
+    if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
+        _check_node(node.left, names)
+        _check_node(node.right, names)
+        return
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        _check_node(node.operand, names)
+        return
+    raise RateExpressionError(f"Disallowed construct in custom rate: {type(node).__name__}")
+
+
+def _eval_node(node: ast.AST, ns: dict[str, float]) -> float:
+    """Evaluate a tree that _check_node accepted."""
+    if isinstance(node, ast.Constant):
         return float(node.value)
     if isinstance(node, ast.Name):
-        if node.id not in ns:
-            raise ValueError(f"Unknown symbol in custom rate: {node.id}")
         return ns[node.id]
-    if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
+    if isinstance(node, ast.BinOp):
         return _BIN_OPS[type(node.op)](_eval_node(node.left, ns), _eval_node(node.right, ns))
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
-        value = _eval_node(node.operand, ns)
-        return value if isinstance(node.op, ast.UAdd) else -value
-    raise ValueError(f"Disallowed construct in custom rate: {type(node).__name__}")
+    value = _eval_node(node.operand, ns)  # UnaryOp
+    return value if isinstance(node.op, ast.UAdd) else -value
 
 
 def resolve_inhibitor_conc(

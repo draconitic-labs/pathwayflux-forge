@@ -63,7 +63,7 @@ npm run build
 
 Each reaction's rate is computed from its rate law and the current concentrations. The rate of change of every non-boundary metabolite is the stoichiometry-weighted sum of the rates of the reactions that produce and consume it. SciPy's `solve_ivp` integrates the system with the chosen method (LSODA by default; RK45, BDF and Radau are also available). Boundary metabolites are held constant. Sensitivity is the relative change of an observed output for a small relative change of one parameter.
 
-Custom rate expressions accept numbers, parameter names (`kf`, `kr`, `Vmax`, `Km`, `Km_product`, `Ki`, `n_hill`, `K_half`), metabolite names, `+ - * / **` and parentheses, up to 500 characters. Every rate law is evaluated once at the initial state before integration; a run with an invalid expression stops and names the reaction.
+Custom rate expressions accept numbers, parameter names (`kf`, `kr`, `Vmax`, `Km`, `Km_product`, `Ki`, `n_hill`, `K_half`), metabolite names, `+ - * / **` and parentheses, up to 500 characters. Before integration, a malformed expression (syntax, construct, unknown name or length) or a rate that is not finite at the initial state stops the run and names the reaction. Division by zero or overflow while evaluating a rate gives zero flux at that state, so a removable singularity such as both species of a denominator starting at zero still integrates.
 
 ## Project layout
 

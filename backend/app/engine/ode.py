@@ -5,9 +5,10 @@ from __future__ import annotations
 import numpy as np
 from scipy.integrate import solve_ivp
 
-from app.engine.rate_laws import make_rate_function
+from app.engine.rate_laws import RateExpressionError, check_custom_expression, make_rate_function
 from app.models.schema import (
     PathwayProject,
+    RateLawType,
     ScenarioOverride,
     SimulationResult,
     SimulationSettings,
@@ -185,15 +186,13 @@ def simulate(
         for j, fn in enumerate(rate_fns):
             try:
                 v[j] = float(fn(conc))
-            except Exception as exc:
-                raise ValueError(f"Reaction {proj.reactions[j].name}: {exc}") from exc
+            except ArithmeticError:
+                # Division by zero or overflow at this state, e.g. a removable singularity when
+                # every species in a denominator is zero: no flux here.
+                v[j] = 0.0
         return v
 
-    # Evaluate every rate law once at the initial state, so a bad custom expression is
-    # reported before integration instead of failing partway through.
-    try:
-        fluxes_at(y0)
-    except ValueError as exc:
+    def failed(message: str) -> SimulationResult:
         return SimulationResult(
             time=[],
             concentrations={},
@@ -201,8 +200,23 @@ def simulate(
             metabolite_names=id_to_name,
             reaction_names={r.id: r.name for r in proj.reactions},
             success=False,
-            message=str(exc),
+            message=message,
         )
+
+    # Malformed custom expressions (syntax, constructs, unknown names, length) stop the run.
+    conc0 = full_conc(y0)
+    for rxn in proj.reactions:
+        if rxn.rate_law == RateLawType.CUSTOM:
+            try:
+                check_custom_expression(rxn, conc0, id_to_name)
+            except RateExpressionError as exc:
+                return failed(f"Reaction {rxn.name}: {exc}")
+
+    # A rate that is infinite or NaN at the initial state would stall the integrator.
+    v0 = fluxes_at(y0)
+    for j, value in enumerate(v0):
+        if not np.isfinite(value):
+            return failed(f"Reaction {proj.reactions[j].name}: rate is not finite at t=0 ({value})")
 
     def rhs(_t: float, y: np.ndarray) -> np.ndarray:
         v = fluxes_at(y)

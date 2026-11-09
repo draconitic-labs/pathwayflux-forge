@@ -120,6 +120,44 @@ def test_simulation_reports_a_bad_custom_expression():
     assert result.time == []
 
 
+def _set_initial(project, names, value):
+    for m in project.metabolites:
+        if m.name in names:
+            m.initial_concentration = value
+
+
+def test_removable_singularity_at_t0_integrates():
+    from app.engine.ode import simulate
+
+    project, _ = _demo_with_custom("Vmax*GAP*Pyruvate/(GAP+Pyruvate) + kf*GAP")
+    _set_initial(project, {"GAP", "Pyruvate"}, 0.0)
+    result = simulate(project)
+    assert result.success, result.message
+    assert len(result.time) > 0
+
+
+def test_typo_in_a_name_fails_by_reaction_name():
+    from app.engine.ode import simulate
+
+    project, name = _demo_with_custom("Vmax * GAP / (Km + GAPP)")
+    result = simulate(project)
+    assert result.success is False
+    assert name in result.message and "GAPP" in result.message
+
+
+def test_infinite_rate_fails_fast_by_reaction_name():
+    import time
+
+    from app.engine.ode import simulate
+
+    project, name = _demo_with_custom("1e999")
+    started = time.monotonic()
+    result = simulate(project)
+    assert time.monotonic() - started < 5
+    assert result.success is False
+    assert name in result.message and "not finite" in result.message
+
+
 def test_simulate_endpoint_returns_the_expression_error(client):
     project, name = _demo_with_custom("kf *")
     r = client.post("/api/simulate", json={"project": project.model_dump()})
