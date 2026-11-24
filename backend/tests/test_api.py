@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.engine.rate_laws import custom_rate
 from app.main import app
-from app.models.schema import RateLawType, RateParameters, Reaction, SpeciesStoich
+from app.models.schema import PathwayProject, RateLawType, RateParameters, Reaction, SpeciesStoich
 from app.services import projects
 
 
@@ -203,3 +205,43 @@ def test_duplicate_max_length_project_id_gets_a_valid_suffix(client):
 
     original = client.get(f"/api/projects/{project_id}")
     assert original.json()["meta"]["name"] == "Original"
+
+
+def test_concurrent_creates_do_not_overwrite_each_other(tmp_path, monkeypatch):
+    monkeypatch.setattr(projects, "PROJECTS_ROOT", tmp_path)
+    legacy_dir = tmp_path / "shared"
+    legacy_dir.mkdir()
+    legacy_note = legacy_dir / "notes.txt"
+    legacy_note.write_text("Keep this file", encoding="utf-8")
+
+    callers_ready = Barrier(2)
+    both_observed_missing = Barrier(2)
+    original_exists = Path.exists
+    original_hardlink = Path.hardlink_to
+
+    def coordinate_exists(path):
+        exists = original_exists(path)
+        if path == legacy_dir / "pathwayflux.json" and not exists:
+            both_observed_missing.wait(timeout=5)
+        return exists
+
+    def coordinate_publish(path, source):
+        if path == legacy_dir / "pathwayflux.json":
+            both_observed_missing.wait(timeout=5)
+        return original_hardlink(path, source)
+
+    def create(name):
+        project = PathwayProject.model_validate({"meta": {"name": name}})
+        callers_ready.wait(timeout=5)
+        return projects.create_project(project, project_id="shared")
+
+    monkeypatch.setattr(Path, "exists", coordinate_exists)
+    monkeypatch.setattr(Path, "hardlink_to", coordinate_publish)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        created = list(pool.map(create, ("First", "Second")))
+
+    assert {project_id for project_id, _ in created} == {"shared", "shared-2"}
+    for project_id, project in created:
+        assert projects.load_project(project_id).meta.name == project.meta.name
+    assert legacy_note.read_text(encoding="utf-8") == "Keep this file"
+    assert list(tmp_path.glob("*/.create-*")) == []

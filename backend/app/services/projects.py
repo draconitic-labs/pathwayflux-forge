@@ -6,6 +6,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from app.models.schema import PathwayProject, ProjectSummary
 
@@ -78,17 +79,24 @@ def load_project(project_id: str) -> PathwayProject:
     return PathwayProject.model_validate(data)
 
 
-def save_project(project_id: str, project: PathwayProject) -> PathwayProject:
+def save_project(
+    project_id: str, project: PathwayProject, *, create_only: bool = False
+) -> PathwayProject:
     d = project_dir(project_id)
     d.mkdir(parents=True, exist_ok=True)
     project.meta.modified_at = _now()
     if not project.meta.created_at:
         project.meta.created_at = project.meta.modified_at
     pf = d / "pathwayflux.json"
-    pf.write_text(
-        project.model_dump_json(indent=2),
-        encoding="utf-8",
-    )
+    content = project.model_dump_json(indent=2)
+    if create_only:
+        # Publish a complete file atomically without replacing another caller's project.
+        with TemporaryDirectory(prefix=".create-", dir=d) as staging:
+            candidate = Path(staging) / pf.name
+            candidate.write_text(content, encoding="utf-8")
+            pf.hardlink_to(candidate)
+    else:
+        pf.write_text(content, encoding="utf-8")
     # assumptions sidecar for clarity
     assumptions_path = d / "ASSUMPTIONS.md"
     lines = [
@@ -109,19 +117,17 @@ def save_project(project_id: str, project: PathwayProject) -> PathwayProject:
 
 
 def create_project(project: PathwayProject, project_id: str | None = None) -> tuple[str, PathwayProject]:
-    ensure_root()
-    pid = project_id or _slug(project.meta.name)
-    # uniquify
-    base = pid
+    base = project_id or _slug(project.meta.name)
+    pid = base
     n = 1
-    while project_file(pid).exists():
-        n += 1
-        suffix = f"-{n}"
-        pid = base[: _MAX_PROJECT_ID_LENGTH - len(suffix)] + suffix
     project.meta.created_at = _now()
-    project.meta.modified_at = project.meta.created_at
-    save_project(pid, project)
-    return pid, project
+    while True:
+        try:
+            return pid, save_project(pid, project, create_only=True)
+        except FileExistsError:
+            n += 1
+            suffix = f"-{n}"
+            pid = base[: _MAX_PROJECT_ID_LENGTH - len(suffix)] + suffix
 
 
 def delete_project(project_id: str) -> None:
