@@ -6,7 +6,6 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 from app.models.schema import PathwayProject, ProjectSummary
 
@@ -90,11 +89,18 @@ def save_project(
     pf = d / "pathwayflux.json"
     content = project.model_dump_json(indent=2)
     if create_only:
-        # Publish a complete file atomically without replacing another caller's project.
-        with TemporaryDirectory(prefix=".create-", dir=d) as staging:
-            candidate = Path(staging) / pf.name
+        # An exclusive directory claim coordinates creators across processes.
+        claim = d / ".create"
+        claim.mkdir()
+        candidate = claim / pf.name
+        try:
+            if pf.exists():
+                raise FileExistsError(pf)
             candidate.write_text(content, encoding="utf-8")
-            pf.hardlink_to(candidate)
+            candidate.replace(pf)
+        finally:
+            candidate.unlink(missing_ok=True)
+            claim.rmdir()
     else:
         pf.write_text(content, encoding="utf-8")
     # assumptions sidecar for clarity

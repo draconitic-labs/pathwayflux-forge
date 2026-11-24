@@ -64,6 +64,13 @@ def test_create_list_delete_round_trip(client):
     assert client.delete("/api/projects/my-model").status_code == 200
 
 
+def test_startup_does_not_duplicate_a_demo_created_by_another_worker(client, monkeypatch):
+    monkeypatch.setattr("app.main.list_projects", lambda: [])
+    with TestClient(app, base_url="http://127.0.0.1"):
+        pass
+    assert [project.id for project in projects.list_projects()] == ["demo-glycolysis"]
+
+
 def _reaction(expr: str) -> tuple[Reaction, RateParameters]:
     params = RateParameters(kf=2.0, custom_expression=expr)
     rxn = Reaction(
@@ -215,20 +222,21 @@ def test_concurrent_creates_do_not_overwrite_each_other(tmp_path, monkeypatch):
     legacy_note.write_text("Keep this file", encoding="utf-8")
 
     callers_ready = Barrier(2)
-    both_observed_missing = Barrier(2)
+    both_claiming = Barrier(2)
     original_exists = Path.exists
-    original_hardlink = Path.hardlink_to
+    original_mkdir = Path.mkdir
+    claim = legacy_dir / ".create"
 
     def coordinate_exists(path):
         exists = original_exists(path)
-        if path == legacy_dir / "pathwayflux.json" and not exists:
-            both_observed_missing.wait(timeout=5)
+        if path == legacy_dir / "pathwayflux.json" and not exists and not original_exists(claim):
+            both_claiming.wait(timeout=5)
         return exists
 
-    def coordinate_publish(path, source):
-        if path == legacy_dir / "pathwayflux.json":
-            both_observed_missing.wait(timeout=5)
-        return original_hardlink(path, source)
+    def coordinate_claim(path, *args, **kwargs):
+        if path == claim:
+            both_claiming.wait(timeout=5)
+        return original_mkdir(path, *args, **kwargs)
 
     def create(name):
         project = PathwayProject.model_validate({"meta": {"name": name}})
@@ -236,7 +244,7 @@ def test_concurrent_creates_do_not_overwrite_each_other(tmp_path, monkeypatch):
         return projects.create_project(project, project_id="shared")
 
     monkeypatch.setattr(Path, "exists", coordinate_exists)
-    monkeypatch.setattr(Path, "hardlink_to", coordinate_publish)
+    monkeypatch.setattr(Path, "mkdir", coordinate_claim)
     with ThreadPoolExecutor(max_workers=2) as pool:
         created = list(pool.map(create, ("First", "Second")))
 
@@ -244,4 +252,4 @@ def test_concurrent_creates_do_not_overwrite_each_other(tmp_path, monkeypatch):
     for project_id, project in created:
         assert projects.load_project(project_id).meta.name == project.meta.name
     assert legacy_note.read_text(encoding="utf-8") == "Keep this file"
-    assert list(tmp_path.glob("*/.create-*")) == []
+    assert list(tmp_path.glob("*/.create")) == []
