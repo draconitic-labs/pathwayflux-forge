@@ -6,6 +6,10 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from shutil import copy2
+from tempfile import TemporaryDirectory
+
+from filelock import FileLock
 
 from app.models.schema import PathwayProject, ProjectSummary
 
@@ -27,6 +31,11 @@ def _slug(name: str) -> str:
 def ensure_root() -> Path:
     PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
     return PROJECTS_ROOT
+
+
+def _write_lock() -> FileLock:
+    # Keep a stable lock file; ownership is released by the OS on process exit.
+    return FileLock(ensure_root() / ".projects.lock", preserve_lock_file=True)
 
 
 _PROJECT_ID = re.compile(rf"[a-z0-9][a-z0-9-]{{0,{_MAX_PROJECT_ID_LENGTH - 1}}}")
@@ -81,28 +90,19 @@ def load_project(project_id: str) -> PathwayProject:
 def save_project(
     project_id: str, project: PathwayProject, *, create_only: bool = False
 ) -> PathwayProject:
+    with _write_lock():
+        if create_only and project_file(project_id).exists():
+            raise FileExistsError(project_id)
+        return _save_project(project_id, project)
+
+
+def _save_project(project_id: str, project: PathwayProject) -> PathwayProject:
     d = project_dir(project_id)
     d.mkdir(parents=True, exist_ok=True)
     project.meta.modified_at = _now()
     if not project.meta.created_at:
         project.meta.created_at = project.meta.modified_at
     pf = d / "pathwayflux.json"
-    content = project.model_dump_json(indent=2)
-    if create_only:
-        # An exclusive directory claim coordinates creators across processes.
-        claim = d / ".create"
-        claim.mkdir()
-        candidate = claim / pf.name
-        try:
-            if pf.exists():
-                raise FileExistsError(pf)
-            candidate.write_text(content, encoding="utf-8")
-            candidate.replace(pf)
-        finally:
-            candidate.unlink(missing_ok=True)
-            claim.rmdir()
-    else:
-        pf.write_text(content, encoding="utf-8")
     # assumptions sidecar for clarity
     assumptions_path = d / "ASSUMPTIONS.md"
     lines = [
@@ -118,7 +118,25 @@ def save_project(
     else:
         lines.append("_No explicit assumptions recorded._")
     lines.append("")
-    assumptions_path.write_text("\n".join(lines), encoding="utf-8")
+    # Publish the authoritative JSON last and restore the sidecar if publication fails.
+    with TemporaryDirectory(prefix=".save-", dir=d) as staging:
+        stage = Path(staging)
+        new_project = stage / pf.name
+        new_project.write_text(project.model_dump_json(indent=2), encoding="utf-8")
+        new_assumptions = stage / assumptions_path.name
+        new_assumptions.write_text("\n".join(lines), encoding="utf-8")
+        previous_assumptions = stage / "previous-assumptions.md"
+        if assumptions_path.exists():
+            copy2(assumptions_path, previous_assumptions)
+        new_assumptions.replace(assumptions_path)
+        try:
+            new_project.replace(pf)
+        except OSError:
+            if previous_assumptions.exists():
+                previous_assumptions.replace(assumptions_path)
+            else:
+                assumptions_path.unlink()
+            raise
     return project
 
 
@@ -126,31 +144,37 @@ def create_project(project: PathwayProject, project_id: str | None = None) -> tu
     base = project_id or _slug(project.meta.name)
     pid = base
     n = 1
-    project.meta.created_at = _now()
-    while True:
-        try:
-            return pid, save_project(pid, project, create_only=True)
-        except FileExistsError:
+    with _write_lock():
+        while project_file(pid).exists():
             n += 1
             suffix = f"-{n}"
             pid = base[: _MAX_PROJECT_ID_LENGTH - len(suffix)] + suffix
+        project.meta.created_at = _now()
+        return pid, _save_project(pid, project)
 
 
 def delete_project(project_id: str) -> None:
-    d = project_dir(project_id)
-    if not d.exists():
-        raise FileNotFoundError(project_id)
-    pf = d / "pathwayflux.json"
-    if pf.exists():
-        pf.unlink()
-    ap = d / "ASSUMPTIONS.md"
-    if ap.exists():
-        ap.unlink()
-    # remove dir if empty
-    try:
-        d.rmdir()
-    except OSError:
-        pass
+    with _write_lock():
+        d = project_dir(project_id)
+        if not d.exists():
+            raise FileNotFoundError(project_id)
+        ap = d / "ASSUMPTIONS.md"
+        with TemporaryDirectory(prefix=".delete-", dir=d) as staging:
+            previous_assumptions = Path(staging) / ap.name
+            if ap.exists():
+                copy2(ap, previous_assumptions)
+                ap.unlink()
+            try:
+                (d / "pathwayflux.json").unlink(missing_ok=True)
+            except OSError:
+                if previous_assumptions.exists():
+                    previous_assumptions.replace(ap)
+                raise
+        # Preserve unrelated files in existing project directories.
+        try:
+            d.rmdir()
+        except OSError:
+            pass
 
 
 def export_project_json(project: PathwayProject) -> str:
