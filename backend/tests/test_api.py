@@ -187,3 +187,19 @@ def test_long_project_name_gets_a_valid_id(client):
     r = client.post("/api/projects", json={"project": demo})
     assert r.status_code == 200, r.text
     assert len(r.json()["id"]) <= 128
+
+
+def test_duplicate_max_length_project_id_gets_a_valid_suffix(client):
+    project_id = "a" * 128
+    for name, expected_id in (
+        ("Original", project_id),
+        ("Second", project_id[:126] + "-2"),
+        ("Third", project_id[:126] + "-3"),
+    ):
+        payload = {"id": project_id, "project": {"meta": {"name": name}}}
+        response = client.post("/api/projects", json=payload)
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == expected_id
+
+    original = client.get(f"/api/projects/{project_id}")
+    assert original.json()["meta"]["name"] == "Original"

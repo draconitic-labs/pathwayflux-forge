@@ -11,6 +11,7 @@ from app.models.schema import PathwayProject, ProjectSummary
 
 # Default projects root: backend/projects
 PROJECTS_ROOT = Path(__file__).resolve().parents[2] / "projects"
+_MAX_PROJECT_ID_LENGTH = 128
 
 
 def _now() -> str:
@@ -28,7 +29,7 @@ def ensure_root() -> Path:
     return PROJECTS_ROOT
 
 
-_PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,127}")
+_PROJECT_ID = re.compile(rf"[a-z0-9][a-z0-9-]{{0,{_MAX_PROJECT_ID_LENGTH - 1}}}")
 
 
 def project_dir(project_id: str) -> Path:
@@ -115,7 +116,8 @@ def create_project(project: PathwayProject, project_id: str | None = None) -> tu
     n = 1
     while project_file(pid).exists():
         n += 1
-        pid = f"{base}-{n}"
+        suffix = f"-{n}"
+        pid = base[: _MAX_PROJECT_ID_LENGTH - len(suffix)] + suffix
     project.meta.created_at = _now()
     project.meta.modified_at = project.meta.created_at
     save_project(pid, project)
