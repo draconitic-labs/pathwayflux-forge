@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.engine.rate_laws import custom_rate
 from app.main import app
-from app.models.schema import RateLawType, RateParameters, Reaction, SpeciesStoich
+from app.models.schema import PathwayProject, RateLawType, RateParameters, Reaction, SpeciesStoich
 from app.services import projects
 
 
@@ -60,6 +63,24 @@ def test_create_list_delete_round_trip(client):
     ids = {p["id"] for p in client.get("/api/projects").json()}
     assert {"demo-glycolysis", "my-model"} <= ids
     assert client.delete("/api/projects/my-model").status_code == 200
+
+
+def test_put_creates_and_updates_the_exact_project_id(client):
+    for name in ("New", "Update"):
+        response = client.put("/api/projects/upsert", json={"meta": {"name": name}})
+        assert response.status_code == 200
+        assert client.get("/api/projects/upsert").json()["meta"]["name"] == name
+    assert {project["id"] for project in client.get("/api/projects").json()} == {
+        "demo-glycolysis",
+        "upsert",
+    }
+
+
+def test_startup_does_not_duplicate_a_demo_created_by_another_worker(client, monkeypatch):
+    monkeypatch.setattr("app.main.list_projects", lambda: [])
+    with TestClient(app, base_url="http://127.0.0.1"):
+        pass
+    assert [project.id for project in projects.list_projects()] == ["demo-glycolysis"]
 
 
 def _reaction(expr: str) -> tuple[Reaction, RateParameters]:
@@ -187,3 +208,113 @@ def test_long_project_name_gets_a_valid_id(client):
     r = client.post("/api/projects", json={"project": demo})
     assert r.status_code == 200, r.text
     assert len(r.json()["id"]) <= 128
+
+
+def test_duplicate_max_length_project_id_gets_a_valid_suffix(client):
+    project_id = "a" * 128
+    for name, expected_id in (
+        ("Original", project_id),
+        ("Second", project_id[:126] + "-2"),
+        ("Third", project_id[:126] + "-3"),
+    ):
+        payload = {"id": project_id, "project": {"meta": {"name": name}}}
+        response = client.post("/api/projects", json=payload)
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == expected_id
+
+    original = client.get(f"/api/projects/{project_id}")
+    assert original.json()["meta"]["name"] == "Original"
+
+
+def test_concurrent_creates_do_not_overwrite_each_other(tmp_path, monkeypatch):
+    monkeypatch.setattr(projects, "PROJECTS_ROOT", tmp_path)
+    legacy_dir = tmp_path / "shared"
+    legacy_dir.mkdir()
+    legacy_note = legacy_dir / "notes.txt"
+    legacy_note.write_text("Keep this file", encoding="utf-8")
+
+    callers_ready = Barrier(2)
+
+    def create(name):
+        project = PathwayProject.model_validate({"meta": {"name": name}})
+        callers_ready.wait(timeout=5)
+        return projects.create_project(project, project_id="shared")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        created = list(pool.map(create, ("First", "Second")))
+
+    assert {project_id for project_id, _ in created} == {"shared", "shared-2"}
+    for project_id, project in created:
+        assert projects.load_project(project_id).meta.name == project.meta.name
+    assert legacy_note.read_text(encoding="utf-8") == "Keep this file"
+
+
+def test_startup_seeds_demo_after_a_process_dies_holding_the_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr(projects, "PROJECTS_ROOT", tmp_path)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import os, sys; from pathlib import Path; from app.services import projects; "
+            "projects.PROJECTS_ROOT = Path(sys.argv[1]); "
+            "lock = projects._write_lock(); lock.acquire(); os._exit(0)",
+            str(tmp_path),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+        timeout=10,
+    )
+    assert (tmp_path / ".projects.lock").exists()
+    with projects._write_lock().acquire(timeout=5):
+        pass
+    with TestClient(app, base_url="http://127.0.0.1"):
+        assert [project.id for project in projects.list_projects()] == ["demo-glycolysis"]
+
+
+def test_failed_save_preserves_existing_project_and_assumptions(tmp_path, monkeypatch):
+    monkeypatch.setattr(projects, "PROJECTS_ROOT", tmp_path)
+    original = PathwayProject.model_validate({"meta": {"name": "Original"}})
+    update = PathwayProject.model_validate({"meta": {"name": "Update"}})
+    projects.save_project("shared", original)
+    assumptions = tmp_path / "shared" / "ASSUMPTIONS.md"
+    original_assumptions = assumptions.read_bytes()
+    replace = Path.replace
+
+    def fail_publish(path, target):
+        if path.name == "pathwayflux.json":
+            raise OSError("publish failed")
+        return replace(path, target)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", fail_publish)
+        with pytest.raises(OSError, match="publish failed"):
+            projects.save_project("shared", update)
+
+    assert projects.load_project("shared").meta.name == "Original"
+    assert assumptions.read_bytes() == original_assumptions
+    assert list(tmp_path.glob("*/.save-*")) == []
+    projects.save_project("shared", update)
+    assert projects.load_project("shared").meta.name == "Update"
+
+
+def test_failed_delete_restores_assumptions(tmp_path, monkeypatch):
+    monkeypatch.setattr(projects, "PROJECTS_ROOT", tmp_path)
+    project = PathwayProject.model_validate({"meta": {"name": "Original"}})
+    projects.save_project("shared", project)
+    assumptions = tmp_path / "shared" / "ASSUMPTIONS.md"
+    original_assumptions = assumptions.read_bytes()
+    unlink = Path.unlink
+
+    def fail_delete(path, *args, **kwargs):
+        if path == tmp_path / "shared" / "pathwayflux.json":
+            raise OSError("delete failed")
+        return unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", fail_delete)
+        with pytest.raises(OSError, match="delete failed"):
+            projects.delete_project("shared")
+
+    assert projects.load_project("shared").meta.name == "Original"
+    assert assumptions.read_bytes() == original_assumptions
+    assert list(tmp_path.glob("*/.delete-*")) == []

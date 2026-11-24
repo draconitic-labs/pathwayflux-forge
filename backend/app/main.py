@@ -46,7 +46,10 @@ async def lifespan(_app: FastAPI):
     # Ensure demo project exists on disk
     existing = {p.id for p in list_projects()}
     if "demo-glycolysis" not in existing:
-        create_project(build_glycolysis_demo(), project_id="demo-glycolysis")
+        try:
+            save_project("demo-glycolysis", build_glycolysis_demo(), create_only=True)
+        except FileExistsError:
+            pass
     yield
 
 
